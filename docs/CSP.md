@@ -30,7 +30,7 @@ violation is POSTed to `/api/csp-report` (`report-uri`).
 | `style-src` | `'self' 'unsafe-inline'` | inline style attributes (React, Radix, motion) and the Stellar Wallets Kit's runtime styles |
 | `img-src` | `'self' data: blob: https://stellar.creit.tech` | local art and the wallet icons in the Stellar Wallets Kit picker |
 | `font-src` | `'self'` | `next/font` self-hosts the Google fonts |
-| `connect-src` | `'self'`, the RPC and Horizon origins, Friendbot (not on mainnet), the anchor | `/api/*` and the `/_vercel/*` analytics and Speed Insights beacons (same origin), Soroban RPC + Horizon (also used by passkey-kit), the testnet dev wallet's funding, the SEP-1/10/24 anchor flow |
+| `connect-src` | `'self'`, the RPC and Horizon origins, Friendbot (not on mainnet), the anchor, and on a non-testnet deployment the testnet RPC | `/api/*` and the `/_vercel/*` analytics and Speed Insights beacons (same origin), Soroban RPC + Horizon (also used by passkey-kit), the testnet dev wallet's funding, the SEP-1/10/24 anchor flow, the read-only `?network=testnet` views (`lib/read-network.ts`) |
 | `worker-src` | `'self'` | `public/sw.js` (push notifications) |
 | `frame-src` | `'none'` | nothing embeds a frame: Albedo, xBull's web wallet and the SEP-24 flow open popups, which CSP does not govern; Freighter, Rabet, LOBSTR, Hana and xBull's extension talk over `postMessage`; WebAuthn (passkeys) is not a CSP fetch |
 | `frame-ancestors` | `'none'` | matches `X-Frame-Options: DENY` |
@@ -48,6 +48,7 @@ agree:
 - `NEXT_PUBLIC_STELLAR_NETWORK` — `mainnet` drops Friendbot and the testnet defaults
 - `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_HORIZON_URL` — their origins (defaults per network)
 - `NEXT_PUBLIC_ANCHOR_HOME_DOMAIN` (bare host → `https://host`), `NEXT_PUBLIC_ANCHOR_TRANSFER_SERVER`
+- `NEXT_PUBLIC_TESTNET_RPC_URL` — the testnet RPC the `?network=testnet` views read (default: the SDK's `NETWORKS.testnet.rpcUrl`); only on a deployment that isn't testnet
 - `NODE_ENV`, `VERCEL_ENV` — the dev and preview additions above
 
 Only a plain `http(s)://host[:port]` origin from an env value reaches the policy, so a stray

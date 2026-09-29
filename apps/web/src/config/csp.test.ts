@@ -1,6 +1,7 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readNetworkConfig } from '@alvinmunk/shared';
+import { NETWORKS } from '@alvinmunk/sdk';
 import { CSP_REPORT_PATH, contentSecurityPolicy } from './csp.mjs';
 
 type Env = Record<string, string | undefined>;
@@ -33,10 +34,16 @@ describe('contentSecurityPolicy', () => {
     ]);
   });
 
-  it('follows a mainnet cutover: its RPC origin and SDF Horizon, no testnet host, no Friendbot', () => {
+  it('follows a mainnet cutover: its RPC origin and SDF Horizon, no Friendbot, no testnet Horizon', () => {
     const connect = csp(MAINNET)['connect-src'];
-    expect(connect).toEqual(["'self'", 'https://rpc.mainnet.example.com', 'https://horizon.stellar.org']);
-    expect(connect.join(' ')).not.toMatch(/testnet|friendbot/);
+    expect(connect).toEqual([
+      "'self'",
+      'https://rpc.mainnet.example.com',
+      'https://horizon.stellar.org',
+      // the ?network=testnet read-only views (lib/read-network)
+      'https://soroban-testnet.stellar.org',
+    ]);
+    expect(connect.join(' ')).not.toMatch(/horizon-testnet|friendbot/);
   });
 
   // The client builds its RPC and Horizon clients from readNetworkConfig: whatever it
@@ -124,5 +131,47 @@ describe('contentSecurityPolicy', () => {
     expect(d['form-action']).toEqual(["'self'"]);
     expect(d['report-uri']).toEqual([CSP_REPORT_PATH]);
     expect(CSP_REPORT_PATH).toBe('/api/csp-report');
+  });
+
+  describe('the ?network=testnet override (#290)', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    });
+
+    it('allows exactly the RPC lib/read-network reads, default or pinned', async () => {
+      for (const pin of [undefined, 'https://testnet-rpc.example.com:8443/v1/KEY']) {
+        const env: Env = { ...MAINNET, NEXT_PUBLIC_TESTNET_RPC_URL: pin };
+        vi.unstubAllEnvs();
+        for (const [k, v] of Object.entries(env)) if (v !== undefined) vi.stubEnv(k, v);
+        vi.resetModules();
+        const { readNetworkFor } = await import('@/lib/read-network');
+        const net = readNetworkFor('testnet')!;
+        expect(net.rpcUrl).toBe(pin ?? NETWORKS.testnet.rpcUrl);
+        const connect = csp(env)['connect-src'];
+        expect(connect).toContain(origin(net.rpcUrl));
+        // a pinned RPC replaces the default; its path (and key) never reaches the policy
+        if (pin) {
+          expect(connect).not.toContain('https://soroban-testnet.stellar.org');
+          expect(connect.join(' ')).not.toContain('KEY');
+        }
+      }
+    });
+
+    it('adds nothing on a testnet deployment, where there is no override', () => {
+      expect(csp({ NEXT_PUBLIC_TESTNET_RPC_URL: 'https://testnet-rpc.example.com' })['connect-src']).not.toContain(
+        'https://testnet-rpc.example.com',
+      );
+    });
+
+    it('takes only a plain origin from the pin', () => {
+      const policy = contentSecurityPolicy({
+        ...MAINNET,
+        NODE_ENV: 'production',
+        NEXT_PUBLIC_TESTNET_RPC_URL: "https://evil.com;script-src'unsafe-eval'",
+      });
+      expect(parse(policy)['connect-src']).toEqual(["'self'", 'https://rpc.mainnet.example.com', 'https://horizon.stellar.org']);
+      expect(policy).not.toMatch(/evil|unsafe-eval/);
+    });
   });
 });

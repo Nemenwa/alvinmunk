@@ -16,6 +16,11 @@ const DEFAULT_URLS = {
   mainnet: { rpcUrl: '', horizonUrl: 'https://horizon.stellar.org' },
 };
 
+/** The testnet deployment lib/read-network reads for `?network=testnet` on any other
+ *  network (#290): @alvinmunk/sdk's `NETWORKS.testnet.rpcUrl` unless
+ *  NEXT_PUBLIC_TESTNET_RPC_URL pins one; csp.test.ts checks the two agree. */
+const TESTNET_OVERRIDE_RPC = 'https://soroban-testnet.stellar.org';
+
 /** Where browsers POST violation reports (app/api/csp-report). */
 export const CSP_REPORT_PATH = '/api/csp-report';
 
@@ -98,6 +103,9 @@ export function contentSecurityPolicy(env) {
       "'self'", // the /api routes and /_vercel analytics + speed insights beacons
       originOf(rpcUrl),
       originOf(horizonUrl),
+      // The read-only ?network=testnet views (lib/read-network), which only override on a
+      // deployment that isn't testnet.
+      network !== 'testnet' && originOf(envValue(env.NEXT_PUBLIC_TESTNET_RPC_URL) ?? TESTNET_OVERRIDE_RPC),
       network !== 'mainnet' && 'https://friendbot.stellar.org', // the dev wallet (never on mainnet)
       anchorHome, // SEP-1 stellar.toml (+ SEP-10/24 when served from the same host)
       originOf(envValue(env.NEXT_PUBLIC_ANCHOR_TRANSFER_SERVER)),
