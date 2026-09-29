@@ -91,6 +91,7 @@ the web app builds the message locally rather than asking an RPC node for it, si
 dishonest node could return the message for its own address.
 
 **Residual risk.**
+
 - Whoever holds the link can still claim: the link is a bearer credential, so share it with
   the intended person only.
 - Cards minted before the upgrade, and any card an integration still mints with the legacy
@@ -108,6 +109,63 @@ cargo deny check
 cargo test
 cargo scout-audit            # cargo install cargo-scout-audit
 ```
+
+## Web client: Content-Security-Policy (CSP)
+
+The web client now implements a Content-Security-Policy as a second line of defense against
+XSS and injection attacks. This is critical because the client handles wallet transactions,
+passkey credentials, and claim secrets from URL fragments.
+
+### Implementation
+
+- **Policy builder:** `apps/web/src/lib/csp.ts` — pure function that builds the CSP from environment variables
+- **Header:** `apps/web/next.config.mjs` — sends `Content-Security-Policy-Report-Only` header
+- **Violation logging:** `apps/web/src/app/api/csp-report/route.ts` — POST endpoint that logs violations to stderr
+
+### Current policy (report-only mode)
+
+```text
+connect-src: self, RPC_URL, HORIZON_URL, https://friendbot.stellar.org, ANCHOR_HOME_DOMAIN, ANCHOR_TRANSFER_SERVER
+script-src: self 'unsafe-inline'  // Required for Next.js bootstrap scripts; will migrate to nonces
+worker-src: self
+frame-ancestors: none
+object-src: none
+base-uri: self
+form-action: self
+report-uri: /api/csp-report
+report-to: csp-endpoint
+```
+
+### Rollout plan
+
+1. **Report-only mode (current):** Monitor violations in preview + production for 1 week
+2. **Verify no violations:** Check logs for Freighter, Albedo, Stellar Wallets Kit, and passkey onboarding
+3. **Switch to enforcing mode:** Change `reportOnly: true` to `reportOnly: false` in `next.config.mjs`
+4. **Nonce-based script-src (future):** Implement via middleware to remove `'unsafe-inline'`
+
+### Monitoring
+
+Check server logs for CSP violations:
+
+```json
+{
+  "timestamp": "2026-09-29T...",
+  "type": "csp-violation",
+  "violatedDirective": "script-src",
+  "effectiveDirective": "script-src",
+  "blockedUri": "https://...",
+  "documentUri": "https://...",
+  "sourceFile": "https://...",
+  "disposition": "report"
+}
+```
+
+### Why this matters
+
+On mainnet, the client handles real money (USDC rewards, tips, treasury path). A CSP is the
+standard second line of defense for a dApp that talks to a wallet. Without it, an injected
+script could read claim secrets from URL fragments or ask the connected wallet to sign
+transactions.
 
 ## Next step for mainnet
 

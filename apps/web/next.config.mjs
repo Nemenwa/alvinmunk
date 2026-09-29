@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getCspHeader } from './src/lib/csp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -17,6 +18,24 @@ const nextConfig = {
     // The sticker asset kit (public/assets/**) is already web-optimized art; skip Next's
     // recompression so every sticker/illustration stays pixel-for-pixel lossless.
     unoptimized: true,
+  },
+  async headers() {
+    // Content-Security-Policy in report-only mode.
+    // Once a week of clean logs in preview + production, switch to enforcing mode
+    // by setting reportOnly: false in getCspHeader().
+    // See docs/SECURITY_REVIEW.md follow-up for the full rollout plan.
+    const cspHeader = getCspHeader({ reportOnly: true });
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: cspHeader.name,
+            value: cspHeader.value,
+          },
+        ],
+      },
+    ];
   },
   webpack: (config, { webpack }) => {
     // @stellar/stellar-sdk@14 (pulled in transitively by passkey-kit's `/minimal` barrel)
