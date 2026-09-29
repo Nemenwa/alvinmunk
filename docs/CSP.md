@@ -1,149 +1,93 @@
-# Content-Security-Policy (CSP) Deployment Guide
+# Content-Security-Policy
 
-## Overview
+The web client signs wallet transactions, creates passkey credentials and reads claim secrets
+from the URL fragment. A CSP is the browser-side second line of defence: an injected script
+that loads from, or talks to, an origin the policy doesn't list is reported (and, once
+enforced, blocked). Issue #179.
 
-The alvinmunk dApp uses a Content-Security-Policy (CSP) as a second line of defense against XSS attacks. Since the client handles real money (USDC rewards, tips, treasury operations) and interacts with wallets, a CSP is critical for security.
+| Piece | Where |
+| --- | --- |
+| Policy builder (plain ESM, built from env) | `apps/web/src/config/csp.mjs` |
+| Header | `headers()` in `apps/web/next.config.mjs`, on every route |
+| Violation endpoint | `POST /api/csp-report` (`app/api/csp-report/route.ts`, parsing in `lib/csp-report.ts`) |
+| Tests | `src/config/csp.test.ts`, `src/config/security-headers.test.ts`, `app/api/csp-report/route.test.ts` |
 
-## Implementation Phases
+The builder is `.mjs` on purpose: Next loads `next.config.mjs` with plain Node, which cannot
+import TypeScript. `security-headers.test.ts` loads the config in a real Node process to keep
+it that way.
 
-### Phase 1: Report-Only Mode (Current)
+## Phase 1 — report-only (current)
 
-The CSP is deployed in report-only mode via the `Content-Security-Policy-Report-Only` header. This allows us to:
+The policy ships as `Content-Security-Policy-Report-Only`: nothing is blocked, and every
+violation is POSTed to `/api/csp-report` (`report-uri`).
 
-- Monitor violations without blocking any functionality
-- Ensure all wallet providers (Freighter, Albedo, Stellar Wallets Kit, passkey) work correctly
-- Verify the policy covers all necessary origins
-- Collect data for a week before enforcing
+### What the policy allows, and why
 
-**Current status**: Deployed in `next.config.mjs` with `getCspPolicyFromEnv(false)`.
+| Directive | Sources | Needed by |
+| --- | --- | --- |
+| `default-src` | `'self'` | everything not listed below (manifest, media) |
+| `script-src` | `'self' 'unsafe-inline'` | Next's inline bootstrap scripts and the pre-paint theme script in `app/layout.tsx`. No hash or nonce may be added while `'unsafe-inline'` is relied on: browsers then ignore `'unsafe-inline'` and block every inline script. Dev adds `'unsafe-eval'` (React Refresh) and `https://va.vercel-scripts.com` (Vercel's debug analytics scripts). |
+| `style-src` | `'self' 'unsafe-inline'` | inline style attributes (React, Radix, motion) and the Stellar Wallets Kit's runtime styles |
+| `img-src` | `'self' data: blob: https://stellar.creit.tech` | local art and the wallet icons in the Stellar Wallets Kit picker |
+| `font-src` | `'self'` | `next/font` self-hosts the Google fonts |
+| `connect-src` | `'self'`, the RPC and Horizon origins, Friendbot (not on mainnet), the anchor | `/api/*` and the `/_vercel/*` analytics and Speed Insights beacons (same origin), Soroban RPC + Horizon (also used by passkey-kit), the testnet dev wallet's funding, the SEP-1/10/24 anchor flow |
+| `worker-src` | `'self'` | `public/sw.js` (push notifications) |
+| `frame-src` | `'none'` | nothing embeds a frame: Albedo, xBull's web wallet and the SEP-24 flow open popups, which CSP does not govern; Freighter, Rabet, LOBSTR, Hana and xBull's extension talk over `postMessage`; WebAuthn (passkeys) is not a CSP fetch |
+| `frame-ancestors` | `'none'` | matches `X-Frame-Options: DENY` |
+| `object-src` / `base-uri` / `form-action` | `'none'` / `'self'` / `'self'` | standard lockdown |
+| `report-uri` | `/api/csp-report` | the violation endpoint |
 
-### Phase 2: Enforcing Mode (Follow-up)
+On preview deployments (`VERCEL_ENV=preview`) the policy also allows the Vercel toolbar
+(`https://vercel.live` and its assets), so previews can run clean too.
 
-After a clean week in production with no violations from legitimate flows, switch to enforcing mode:
+### The env it reads
 
-1. Change `next.config.mjs`:
-   ```js
-   const cspPolicy = getCspPolicyFromEnv(true); // was false
-   ```
-2. Change the header key:
-   ```js
-   { key: 'Content-Security-Policy', value: cspPolicy }
-   ```
-3. Deploy to preview first, then production
+Resolved exactly like `readNetworkConfig` (`@alvinmunk/shared`); `csp.test.ts` checks the two
+agree:
 
-**TODO**: Document the exact date and commit when this switch happens.
+- `NEXT_PUBLIC_STELLAR_NETWORK` — `mainnet` drops Friendbot and the testnet defaults
+- `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_HORIZON_URL` — their origins (defaults per network)
+- `NEXT_PUBLIC_ANCHOR_HOME_DOMAIN` (bare host → `https://host`), `NEXT_PUBLIC_ANCHOR_TRANSFER_SERVER`
+- `NODE_ENV`, `VERCEL_ENV` — the dev and preview additions above
 
-## Policy Structure
+Only a plain `http(s)://host[:port]` origin from an env value reaches the policy, so a stray
+path, query, `;` or quote can never add a source or a directive.
 
-The policy is built in `src/lib/csp.ts` from environment variables:
+The policy is computed when Next loads its config (at build on Vercel), so a changed env
+var needs a redeploy, like every `NEXT_PUBLIC_*` value.
 
-- **connect-src**: RPC, Horizon, Friendbot, Anchor domains, Vercel Analytics
-- **script-src**: `'self' 'unsafe-inline'` (Next.js bootstrap requires inline scripts)
-- **worker-src**: `'self'` (for service workers)
-- **frame-src**: `'none'` (no frames allowed)
-- **object-src**: `'none'` (no plugins)
-- **base-uri**: `'self'` (restrict base tag)
-- **form-action**: `'self'` (restrict form submissions)
-- **frame-ancestors**: `'none'` (prevent framing)
+**Anchor caveat:** the SEP-10 `WEB_AUTH_ENDPOINT` and SEP-24 `TRANSFER_SERVER_SEP0024` come
+from the anchor's `stellar.toml` at runtime. When they live on a host other than the home
+domain or `NEXT_PUBLIC_ANCHOR_TRANSFER_SERVER`, the cash-out flow reports `connect-src`
+violations: add that origin in `csp.mjs` before enforcing.
 
-### Environment Variables
+### Reading the reports
 
-The policy reads these variables from `process.env`:
+Each violation is one log line:
 
-- `NEXT_PUBLIC_RPC_URL`: Stellar Soroban RPC endpoint
-- `NEXT_PUBLIC_HORIZON_URL`: Stellar Horizon endpoint
-- `NEXT_PUBLIC_ANCHOR_HOME_DOMAIN`: Anchor home domain (optional)
-- `NEXT_PUBLIC_ANCHOR_TRANSFER_SERVER`: Anchor transfer server (optional)
-
-## Violation Reporting
-
-Violations are reported to `/api/csp-report` via POST. The endpoint:
-
-- Logs violations to console with relevant details (directive, blocked URI, document URI)
-- Returns 204 No Content (never echoes the report body to prevent information leakage)
-- Is safe to expose publicly (no secrets in the response)
-
-### Monitoring
-
-Monitor Vercel logs or your logging provider for:
-
-```
-[CSP Violation] { directive: '...', blockedUri: '...', documentUri: '...', ... }
+```json
+{"csp":"violation","directive":"img-src","blocked":"https://cdn.example.com","document":"https://alvinmunk.vercel.app/claim/7","line":12,"disposition":"report"}
 ```
 
-### Common Violations
+The endpoint logs the directive, the blocked origin (or keyword: `inline`, `eval`, `data`…)
+and the page and script as origin + path. It never logs a query or fragment — a legacy claim
+link carries its secret in `?s=` — nor the referrer or script sample. It answers with an
+empty body (204 for a report, 400 for anything else, 413 above 16 KB).
 
-**Legitimate violations to expect during Phase 1:**
+Violations from browser extensions (`blocked` or `document` of `chrome-extension:`,
+`moz-extension:`) are the extension's, not the app's. Anything else from a real flow means
+a source is missing: add it to `csp.mjs` with the reason, and a test.
 
-- None from wallet flows (Freighter, Albedo, passkey)
-- None from claim page URL fragment reading (client-side only)
-- None from Vercel Analytics or Speed Insights
+## Phase 2 — enforce (follow-up)
 
-**If you see unexpected violations:**
+Once a preview and production have each run a week with no violations from real flows
+(wallet connect + sign with Freighter, Albedo, xBull, the Stellar Wallets Kit picker,
+passkey onboarding, a claim link, the SEP-24 cash-out):
 
-1. Check if the blocked URI is a legitimate third-party resource
-2. If yes, add its origin to the appropriate directive in `src/lib/csp.ts`
-3. If no, investigate potential XSS or injection
+1. In `next.config.mjs`, rename the header key `Content-Security-Policy-Report-Only` to
+   `Content-Security-Policy`, and update `security-headers.test.ts` to expect it.
+2. Ship to a preview, run the flows above, then production.
+3. To roll back, rename the key back; nothing else changes.
 
-## Testing
-
-Unit tests are in `src/lib/csp.test.ts`:
-
-```bash
-cd apps/web
-npm test -- csp.test.ts
-```
-
-Tests verify:
-
-- All required directives are present
-- Origins are correctly extracted from URLs
-- Invalid URLs are handled gracefully
-- Environment variables are read correctly
-- Policy structure matches expectations
-
-## Security Considerations
-
-### Why CSP Matters
-
-The dApp handles:
-
-- Wallet signatures for transactions
-- Passkey credentials (WebAuthn)
-- Claim secrets from URL fragments (client-side only)
-- Real money operations (USDC rewards, tips, treasury)
-
-Without CSP, an injected script could:
-
-- Read claim secrets from `window.location.hash`
-- Request wallet signatures from connected wallets
-- Exfiltrate sensitive data
-
-### Current Limitations
-
-- **script-src uses 'unsafe-inline'**: Required for Next.js inline bootstrap scripts. Phase 2 should move to nonce-based script-src via middleware.
-- **No nonce support yet**: Future work to tighten script-src further.
-
-### Defense in Depth
-
-CSP is the second line of defense. The first line is:
-
-- Input validation and sanitization
-- Secure coding practices
-- Regular security audits (see `docs/SECURITY_REVIEW.md`)
-
-## Rollback Procedure
-
-If enforcing mode breaks legitimate functionality:
-
-1. Revert to report-only mode in `next.config.mjs`
-2. Deploy the fix immediately
-3. Investigate the violation in logs
-4. Update the policy if needed
-5. Re-deploy enforcing mode after verification
-
-## References
-
-- [MDN: Content-Security-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP)
-- [CSP Evaluator](https://csp-evaluator.withgoogle.com/)
-- [OWASP CSP Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html)
+After that, `'unsafe-inline'` in `script-src` can be replaced by a per-request nonce set in
+middleware (Next's documented nonce setup), which also covers the layout's theme script.

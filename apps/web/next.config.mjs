@@ -1,19 +1,14 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { contentSecurityPolicy } from './src/config/csp.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Import CSP policy builder (must be after __dirname is defined for transpilation)
-import { getCspPolicyFromEnv } from './src/lib/csp';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   async headers() {
-    // Generate CSP policy from environment variables (report-only mode in Phase 1)
-    const cspPolicy = getCspPolicyFromEnv(false);
-    
     return [
       {
         // Apply to every route (pages + API)
@@ -32,8 +27,11 @@ const nextConfig = {
               'camera=(), microphone=(), geolocation=(), publickey-credentials-get=(self), publickey-credentials-create=(self)',
           },
           {
+            // Report-only first (#179): violations reach /api/csp-report and nothing is
+            // blocked. After a clean week on preview and production, rename the key to
+            // Content-Security-Policy to enforce it (docs/CSP.md).
             key: 'Content-Security-Policy-Report-Only',
-            value: cspPolicy,
+            value: contentSecurityPolicy(process.env),
           },
         ],
       },

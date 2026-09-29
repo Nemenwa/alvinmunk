@@ -1,62 +1,32 @@
 /**
- * CSP violation report endpoint.
+ * POST /api/csp-report — the `report-uri` of the Content-Security-Policy (src/config/csp.mjs).
+ * Browsers post violations here; it logs one line per violation — the directive and what
+ * was blocked — and answers with an empty body (204 for a report, 400/413 for anything
+ * else), so nothing it received is ever echoed.
  *
- * Receives Content-Security-Policy violation reports from the browser and logs them.
- * The report body is never echoed back to prevent information leakage.
- *
- * This endpoint is called automatically when the CSP-Report-Only header is present
- * and a violation occurs. The browser sends a JSON report with details about what
- * was blocked and why.
- *
- * See docs/CSP.md for monitoring guidance.
+ * What is logged, and what never is, is decided in lib/csp-report.
  */
-
-import { withRoute } from '../../../lib/api-route';
+import { withRoute } from '@/lib/api-route';
+import { MAX_CSP_REPORT_BYTES, parseCspReports } from '@/lib/csp-report';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-interface CspViolationReport {
-  'csp-report': {
-    'document-uri': string;
-    'referrer': string;
-    'violated-directive': string;
-    'effective-directive': string;
-    'original-policy': string;
-    'disposition': string;
-    'blocked-uri': string;
-    'line-number'?: number;
-    'column-number'?: number;
-    'source-file'?: string;
-    'status-code'?: number;
-    'script-sample'?: string;
-  };
-}
+const noContent = (status: number) => new Response(null, { status });
 
-export const POST = withRoute('POST /api/csp-report', async (req: Request): Promise<Response> => {
+export const POST = withRoute('POST /api/csp-report', async (req: Request) => {
+  if (Number(req.headers.get('content-length') ?? 0) > MAX_CSP_REPORT_BYTES) return noContent(413);
+  const text = await req.text();
+  if (text.length > MAX_CSP_REPORT_BYTES) return noContent(413);
+
+  let body: unknown;
   try {
-    const body = (await req.json()) as CspViolationReport;
-    const report = body['csp-report'];
-
-    // Log the violation for monitoring (never echo the body in the response)
-    console.error(
-      '[CSP Violation]',
-      {
-        directive: report['violated-directive'],
-        effectiveDirective: report['effective-directive'],
-        blockedUri: report['blocked-uri'],
-        documentUri: report['document-uri'],
-        sourceFile: report['source-file'],
-        lineNumber: report['line-number'],
-        columnNumber: report['column-number'],
-      },
-    );
-
-    // Return 204 No Content - success without echoing any data
-    return new Response(null, { status: 204 });
-  } catch (err) {
-    // If parsing fails, still return 204 to avoid leaking error details
-    console.error('[CSP Report] Failed to parse violation report', err);
-    return new Response(null, { status: 204 });
+    body = JSON.parse(text);
+  } catch {
+    return noContent(400);
   }
+  const violations = parseCspReports(body);
+  if (violations.length === 0) return noContent(400);
+  for (const v of violations) console.warn(JSON.stringify({ csp: 'violation', ...v }));
+  return noContent(204);
 });
