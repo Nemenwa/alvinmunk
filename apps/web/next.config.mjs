@@ -3,11 +3,17 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Import CSP policy builder (must be after __dirname is defined for transpilation)
+import { getCspPolicyFromEnv } from './src/lib/csp';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   async headers() {
+    // Generate CSP policy from environment variables (report-only mode in Phase 1)
+    const cspPolicy = getCspPolicyFromEnv(false);
+    
     return [
       {
         // Apply to every route (pages + API)
@@ -24,6 +30,10 @@ const nextConfig = {
             key: 'Permissions-Policy',
             value:
               'camera=(), microphone=(), geolocation=(), publickey-credentials-get=(self), publickey-credentials-create=(self)',
+          },
+          {
+            key: 'Content-Security-Policy-Report-Only',
+            value: cspPolicy,
           },
         ],
       },
