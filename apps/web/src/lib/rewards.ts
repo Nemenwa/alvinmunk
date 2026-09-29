@@ -292,10 +292,16 @@ export async function claimReward(wallet: Wallet, rewardId: number): Promise<voi
 }
 
 async function waitConfirmed(hash: string): Promise<void> {
+  let lastErr: unknown;
   for (let i = 0; i < 15; i++) {
-    const res = await server.getTransaction(hash);
-    if (res.status === 'SUCCESS') return;
-    if (res.status === 'FAILED') throw new Error(`tx ${hash} failed on-chain`);
+    try {
+      const res = await server.getTransaction(hash);
+      if (res.status === 'SUCCESS') return;
+      if (res.status === 'FAILED') throw new Error(`tx ${hash} failed on-chain`);
+    } catch (e) {
+      if (e instanceof Error && e.message.endsWith('failed on-chain')) throw e;
+      lastErr = e; // transient decode/RPC error — keep polling
+    }
     await new Promise((r) => setTimeout(r, 1000));
   }
 }

@@ -26,10 +26,15 @@ export async function sendXlm(wallet: Wallet, to: string, amount: string): Promi
   const hash = await submitSigned(signed, 'payment');
 
   // Poll briefly so the UI can show a confirmed success/failure.
+  let lastErr: unknown;
   for (let i = 0; i < 15; i++) {
-    const res = await server.getTransaction(hash);
-    if (res.status === 'SUCCESS') return { hash, status: 'SUCCESS' };
-    if (res.status === 'FAILED') return { hash, status: 'FAILED' };
+    try {
+      const res = await server.getTransaction(hash);
+      if (res.status === 'SUCCESS') return { hash, status: 'SUCCESS' };
+      if (res.status === 'FAILED') return { hash, status: 'FAILED' };
+    } catch (e) {
+      lastErr = e; // transient decode/RPC error — keep polling
+    }
     await new Promise((r) => setTimeout(r, 1000));
   }
   return { hash, status: 'PENDING' };
