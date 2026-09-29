@@ -334,4 +334,17 @@ describe('handle cooldown', () => {
     await expect(handleAvailability('alice')).resolves.toEqual({ status: 'free' });
     await expect(isHandleAvailable('alice')).resolves.toBe(true);
   });
+
+  it('reports owned status when the handle is held by the provided address', async () => {
+    chain(PREV, null);
+    await expect(handleAvailability('alice', PREV)).resolves.toEqual({ status: 'owned' });
+    await expect(isHandleAvailable('alice', PREV)).resolves.toBe(true);
+  });
+
+  it('reports taken status when the handle is held by a different address', async () => {
+    const OTHER = 'G'.padEnd(56, 'X');
+    chain(OTHER, null);
+    await expect(handleAvailability('alice', PREV)).resolves.toEqual({ status: 'taken' });
+    await expect(isHandleAvailable('alice', PREV)).resolves.toBe(false);
+  });
 });

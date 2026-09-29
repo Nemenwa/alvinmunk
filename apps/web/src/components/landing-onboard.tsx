@@ -57,13 +57,14 @@ export function LandingOnboard() {
           className="h-11 flex-1 border-0 bg-transparent focus-visible:ring-0"
         />
         <Button type="submit" variant="flow" size="md" disabled={creating || avail === 'taken' || avail === 'reserved'} className="shrink-0">
-          {creating ? t('onboard.landing.creating') : t('onboard.landing.startFree')}
-          {!creating && <ArrowRight className="size-4" />}
+          {avail === 'owned' ? t('onboard.landing.restore') : creating ? t('onboard.landing.creating') : t('onboard.landing.startFree')}
+          {!creating && avail !== 'owned' && <ArrowRight className="size-4" />}
         </Button>
       </div>
       <p className="mt-2 h-4 pl-4 text-xs">
         {avail === 'checking' && <span className="text-muted-foreground">{t('onboard.landing.checking')}</span>}
         {avail === 'free' && <span className="text-secondary">{t('onboard.landing.handleFree', { handle: normalizeHandle(handle) })}</span>}
+        {avail === 'owned' && <span className="text-secondary">{t('onboard.landing.handleOwned', { handle: normalizeHandle(handle) })}</span>}
         {avail === 'taken' && <span className="text-destructive">{t('onboard.landing.handleTaken', { handle: normalizeHandle(handle) })}</span>}
         {avail === 'reserved' && reservedUntil && <span className="text-destructive">{t('onboard.landing.handleReserved', { handle: normalizeHandle(handle), date: reservedUntil })}</span>}
         {avail === 'idle' && <span className="text-muted-foreground">{t('onboard.landing.pill')}</span>}

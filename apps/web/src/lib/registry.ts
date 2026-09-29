@@ -108,6 +108,7 @@ export async function getHandleCooldown(handle: string): Promise<HandleCooldown 
 export type HandleAvailability =
   | { status: 'free' }
   | { status: 'taken' }
+  | { status: 'owned' }
   | { status: 'reserved'; until: Date };
 
 /**
@@ -120,7 +121,11 @@ export async function handleAvailability(
   address?: string,
 ): Promise<HandleAvailability> {
   const [owner, cooldown] = await Promise.all([resolveHandle(handle), getHandleCooldown(handle)]);
-  if (owner !== null) return { status: 'taken' };
+  if (owner !== null) {
+    // If the handle is owned by the provided address, it's available to them (idempotent claim)
+    if (address && owner === address) return { status: 'owned' };
+    return { status: 'taken' };
+  }
   if (cooldown && cooldown.prevOwner !== address) {
     return { status: 'reserved', until: cooldown.until };
   }
@@ -129,7 +134,8 @@ export async function handleAvailability(
 
 /** Is this handle free for `address` (anyone, when omitted) to claim? */
 export async function isHandleAvailable(handle: string, address?: string): Promise<boolean> {
-  return (await handleAvailability(handle, address)).status === 'free';
+  const avail = await handleAvailability(handle, address);
+  return avail.status === 'free' || avail.status === 'owned';
 }
 
 /** Claim `@handle` on-chain (first-come; renames if the wallet already holds one). */

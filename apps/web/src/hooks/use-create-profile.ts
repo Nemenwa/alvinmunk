@@ -15,7 +15,7 @@ import type { Wallet } from '@/lib/wallet';
 export type CreateProfileSource = 'app' | 'landing' | 'claim';
 
 /** `reserved`: freed recently and cooling down for its previous owner (see `reservedUntil`). */
-export type HandleAvailability = 'idle' | 'checking' | 'free' | 'taken' | 'reserved';
+export type HandleAvailability = 'idle' | 'checking' | 'free' | 'taken' | 'owned' | 'reserved';
 
 export interface UseCreateProfileOptions {
   from: CreateProfileSource;
@@ -140,6 +140,19 @@ export function useCreateProfile({ from, face, onCreated }: UseCreateProfileOpti
         return;
       }
       const a = await handleAvailability(h, w.address);
+      if (a.status === 'owned') {
+        // The wallet already owns this handle — restore the profile directly without claiming
+        const p: Profile = {
+          handle: h,
+          address: w.address,
+          createdAt: Date.now(),
+          avatar: face ? { kind: 'face', id: face } : undefined,
+          source: from,
+        };
+        setProfile(p);
+        welcomeBack(w, p);
+        return;
+      }
       if (a.status === 'reserved') {
         setAvail('reserved');
         setReservedUntil(day(a.until));
